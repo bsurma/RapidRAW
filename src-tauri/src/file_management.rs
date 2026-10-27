@@ -130,9 +130,9 @@ fn resolve_image_metadata(
         ImageMetadata::default()
     };
 
-    if enable_xmp_sync && sync_metadata_from_xmp(image_path, &mut metadata) {
+    if enable_xmp_sync && sync_metadata_from_xmp(image_path, sidecar_path, &mut metadata) {
         let _ = crate::exif_processing::update_sidecar(sidecar_path, image_path, |current| {
-            sync_metadata_from_xmp(image_path, current);
+            sync_metadata_from_xmp(image_path, sidecar_path, current);
         });
     }
 
@@ -3339,10 +3339,10 @@ pub async fn load_metadata(path: String, app_handle: AppHandle) -> Result<ImageM
         let (source_path, sidecar_path) = parse_virtual_path(&path);
         let mut metadata = crate::exif_processing::load_sidecar(&sidecar_path);
 
-        if enable_xmp_sync && sync_metadata_from_xmp(&source_path, &mut metadata) {
+        if enable_xmp_sync && sync_metadata_from_xmp(&source_path, &sidecar_path, &mut metadata) {
             let _ =
                 crate::exif_processing::update_sidecar(&sidecar_path, &source_path, |current| {
-                    sync_metadata_from_xmp(&source_path, current);
+                    sync_metadata_from_xmp(&source_path, &sidecar_path, current);
                 });
         }
 
@@ -4498,19 +4498,35 @@ pub fn extract_xmp_tags(content: &str) -> Vec<String> {
     tags
 }
 
-pub fn resolve_xmp_path(image_path: &Path) -> Option<PathBuf> {
-    let xmp_path = image_path.with_extension("xmp");
-    let xmp_path_upper = image_path.with_extension("XMP");
-    if xmp_path.exists() {
-        Some(xmp_path)
-    } else if xmp_path_upper.exists() {
-        Some(xmp_path_upper)
-    } else {
-        None
-    }
+fn xmp_with_full_name(image_path: &Path, extension: &str) -> PathBuf {
+    let mut name = image_path.file_name().unwrap_or_default().to_os_string();
+    name.push(".");
+    name.push(extension);
+    image_path.with_file_name(name)
 }
 
-pub fn sync_metadata_from_xmp(source_path: &Path, metadata: &mut ImageMetadata) -> bool {
+// Prefers `photo.jpg.xmp` (Immich, darktable, digiKam) over `photo.xmp` (Lightroom, Capture One),
+// matching the order Immich uses, so both apps share the same sidecar when both exist.
+pub fn resolve_xmp_path(image_path: &Path) -> Option<PathBuf> {
+    [
+        xmp_with_full_name(image_path, "xmp"),
+        xmp_with_full_name(image_path, "XMP"),
+        image_path.with_extension("xmp"),
+        image_path.with_extension("XMP"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+fn modified_time(path: &Path) -> Option<std::time::SystemTime> {
+    fs::metadata(path).ok()?.modified().ok()
+}
+
+pub fn sync_metadata_from_xmp(
+    source_path: &Path,
+    sidecar_path: &Path,
+    metadata: &mut ImageMetadata,
+) -> bool {
     let actual_xmp = resolve_xmp_path(source_path);
 
     let mut changed = false;
@@ -4519,15 +4535,30 @@ pub fn sync_metadata_from_xmp(source_path: &Path, metadata: &mut ImageMetadata) 
         && let Ok(content) = fs::read_to_string(&xmp_file)
     {
         let xmp_rating = extract_xmp_rating(&content);
+        // An XMP written after the sidecar was edited elsewhere (e.g. by Immich), so its rating wins.
+        let xmp_is_newer = match (modified_time(&xmp_file), modified_time(sidecar_path)) {
+            (Some(xmp), Some(sidecar)) => xmp > sidecar,
+            (Some(_), None) => true,
+            _ => false,
+        };
 
         if xmp_rating == Some(XMP_REJECTED_RATING) && metadata.flag.is_none() {
             metadata.flag = Some(ImageFlag::Reject);
             changed = true;
         }
 
-        if metadata.rating == 0
-            && let Some(rating) = xmp_rating.and_then(|r| u8::try_from(r).ok())
-            && rating != 0
+        if xmp_is_newer
+            && metadata.flag == Some(ImageFlag::Reject)
+            && xmp_rating.is_some_and(|r| r >= 0)
+        {
+            metadata.flag = None;
+            changed = true;
+        }
+
+        if let Some(rating) = xmp_rating.and_then(|r| u8::try_from(r).ok())
+            && rating <= 5
+            && rating != metadata.rating
+            && (xmp_is_newer || metadata.rating == 0)
         {
             metadata.rating = rating;
             if !metadata.adjustments.is_object() {
@@ -4572,15 +4603,7 @@ pub fn sync_metadata_from_xmp(source_path: &Path, metadata: &mut ImageMetadata) 
 
 pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create_if_missing: bool) {
     let xmp_path = source_path.with_extension("xmp");
-    let xmp_path_upper = source_path.with_extension("XMP");
-
-    let mut actual_xmp = if xmp_path.exists() {
-        Some(xmp_path.clone())
-    } else if xmp_path_upper.exists() {
-        Some(xmp_path_upper.clone())
-    } else {
-        None
-    };
+    let mut actual_xmp = resolve_xmp_path(source_path);
 
     if actual_xmp.is_none() {
         if !create_if_missing {
