@@ -1852,6 +1852,9 @@
       "title": "General Settings",
       "toolFocusMode": "Tool Focus Mode",
       "toolFocusModeDesc": "Automatically collapses the other tools in a panel when you expand one.",
+      "xmpIncludeExtension": "Keep image extension",
+      "xmpNaming": "XMP File Naming",
+      "xmpNamingDesc": "Name new XMP files photo.jpg.xmp, as used by Immich, darktable and digiKam, instead of photo.xmp as used by Lightroom. Existing XMP files of either style are always kept in sync.",
       "xmpSync": "XMP Metadata Sync",
       "xmpSyncDesc": "Sync ratings, color labels and tags to standard XMP sidecar files for compatibility with other photo editors."
     },

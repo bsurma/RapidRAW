@@ -1011,6 +1011,21 @@ export default function SettingsPanel({
                                     }
                                   />
                                 </SettingItem>
+                                {(appSettings?.createXmpIfMissing ?? false) && (
+                                  <SettingItem
+                                    label={t('settings.general.xmpNaming')}
+                                    description={t('settings.general.xmpNamingDesc')}
+                                  >
+                                    <Switch
+                                      checked={appSettings?.xmpIncludeExtension ?? false}
+                                      id="xmp-include-extension-toggle"
+                                      label={t('settings.general.xmpIncludeExtension')}
+                                      onChange={(checked) =>
+                                        onSettingsChange({ ...appSettings, xmpIncludeExtension: checked })
+                                      }
+                                    />
+                                  </SettingItem>
+                                )}
                               </div>
                             </motion.div>
                           )}

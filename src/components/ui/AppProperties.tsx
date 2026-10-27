@@ -258,6 +258,7 @@ export interface AppSettings {
   linearRawMode?: string;
   enableXmpSync?: boolean;
   createXmpIfMissing?: boolean;
+  xmpIncludeExtension?: boolean;
   isWaveformVisible?: boolean;
   waveformHeight?: number;
   activeWaveformChannel?: string;

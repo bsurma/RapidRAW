@@ -2752,8 +2752,8 @@ pub fn save_metadata_and_update_thumbnail(
     if let Ok(settings) = load_settings(app_handle.clone())
         && settings.enable_xmp_sync.unwrap_or(false)
     {
-        let create_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
-        sync_metadata_to_xmp(&source_path, &metadata, create_if_missing);
+        let xmp_creation = XmpCreation::from_settings(&settings);
+        sync_metadata_to_xmp(&source_path, &metadata, xmp_creation);
     }
 
     let loaded_image_lock = state.original_image.lock().unwrap();
@@ -2917,7 +2917,7 @@ fn update_sidecars_and_thumbnails(
 
     let settings = load_settings(app_handle.clone()).unwrap_or_default();
     let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
-    let create_xmp_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
+    let xmp_creation = XmpCreation::from_settings(&settings);
 
     let (updated_tx, updated_rx) = std::sync::mpsc::channel::<String>();
     let thumbnail_app_handle = app_handle.clone();
@@ -2948,7 +2948,7 @@ fn update_sidecars_and_thumbnails(
                         resolved_ai.lock().unwrap().push(path.clone());
                     }
                     if enable_xmp_sync {
-                        sync_metadata_to_xmp(&source_path, &metadata, create_xmp_if_missing);
+                        sync_metadata_to_xmp(&source_path, &metadata, xmp_creation);
                     }
                 }
                 Err(e) => log::error!("Failed to update sidecar for {}: {}", path, e),
@@ -3089,7 +3089,7 @@ async fn update_sidecars_from_images(
     tauri::async_runtime::spawn_blocking(move || {
         let settings = load_settings(app_handle.clone()).unwrap_or_default();
         let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
-        let create_xmp_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
+        let xmp_creation = XmpCreation::from_settings(&settings);
 
         let state = app_handle.state::<AppState>();
         let thumb_cache_dir = match resolve_thumbnail_cache_dir(&app_handle) {
@@ -3141,7 +3141,7 @@ async fn update_sidecars_from_images(
                 .map_err(|e| e.to_string())?;
 
                 if enable_xmp_sync {
-                    sync_metadata_to_xmp(&source_path, &updated_metadata, create_xmp_if_missing);
+                    sync_metadata_to_xmp(&source_path, &updated_metadata, xmp_creation);
                 }
                 Ok(image)
             })()
@@ -3259,14 +3259,14 @@ fn update_metadata_for_paths(
 ) {
     let settings = load_settings(app_handle.clone()).unwrap_or_default();
     let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
-    let create_xmp_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
+    let xmp_creation = XmpCreation::from_settings(&settings);
 
     paths.par_iter().for_each(|path| {
         let (source_path, sidecar_path) = parse_virtual_path(path);
 
         match crate::exif_processing::update_sidecar(&sidecar_path, &source_path, &update) {
             Ok(metadata) if enable_xmp_sync => {
-                sync_metadata_to_xmp(&source_path, &metadata, create_xmp_if_missing);
+                sync_metadata_to_xmp(&source_path, &metadata, xmp_creation);
             }
             Ok(_) => {}
             Err(e) => log::error!("Failed to update sidecar for {}: {}", path, e),
@@ -4505,21 +4505,56 @@ fn xmp_with_full_name(image_path: &Path, extension: &str) -> PathBuf {
     image_path.with_file_name(name)
 }
 
-// Prefers `photo.jpg.xmp` (Immich, darktable, digiKam) over `photo.xmp` (Lightroom, Capture One),
-// matching the order Immich uses, so both apps share the same sidecar when both exist.
-pub fn resolve_xmp_path(image_path: &Path) -> Option<PathBuf> {
+#[derive(Clone, Copy, PartialEq)]
+pub enum XmpCreation {
+    Never,
+    // `photo.xmp` (Lightroom, Capture One)
+    ReplaceExtension,
+    // `photo.jpg.xmp` (Immich, darktable, digiKam)
+    AppendExtension,
+}
+
+impl XmpCreation {
+    pub fn from_settings(settings: &AppSettings) -> Self {
+        if !settings.create_xmp_if_missing.unwrap_or(false) {
+            Self::Never
+        } else if settings.xmp_include_extension.unwrap_or(false) {
+            Self::AppendExtension
+        } else {
+            Self::ReplaceExtension
+        }
+    }
+}
+
+// Both naming styles can exist side by side, e.g. when RapidRAW created `photo.xmp` and Immich
+// later created `photo.jpg.xmp`. The case variants are only checked when the lowercase one is
+// missing, so a case-insensitive filesystem doesn't report the same file twice.
+fn existing_xmp_paths(image_path: &Path) -> Vec<PathBuf> {
     [
-        xmp_with_full_name(image_path, "xmp"),
-        xmp_with_full_name(image_path, "XMP"),
-        image_path.with_extension("xmp"),
-        image_path.with_extension("XMP"),
+        [
+            xmp_with_full_name(image_path, "xmp"),
+            xmp_with_full_name(image_path, "XMP"),
+        ],
+        [
+            image_path.with_extension("xmp"),
+            image_path.with_extension("XMP"),
+        ],
     ]
     .into_iter()
-    .find(|path| path.exists())
+    .filter_map(|variants| variants.into_iter().find(|path| path.exists()))
+    .collect()
 }
 
 fn modified_time(path: &Path) -> Option<std::time::SystemTime> {
     fs::metadata(path).ok()?.modified().ok()
+}
+
+// The most recently written sidecar holds the latest rating, whichever app wrote it.
+pub fn resolve_xmp_path(image_path: &Path) -> Option<PathBuf> {
+    existing_xmp_paths(image_path)
+        .into_iter()
+        .rev()
+        .max_by_key(|path| modified_time(path))
 }
 
 pub fn sync_metadata_from_xmp(
@@ -4601,14 +4636,15 @@ pub fn sync_metadata_from_xmp(
     changed
 }
 
-pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create_if_missing: bool) {
-    let xmp_path = source_path.with_extension("xmp");
-    let mut actual_xmp = resolve_xmp_path(source_path);
+pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, creation: XmpCreation) {
+    let mut xmp_files = existing_xmp_paths(source_path);
 
-    if actual_xmp.is_none() {
-        if !create_if_missing {
-            return;
-        }
+    if xmp_files.is_empty() {
+        let xmp_path = match creation {
+            XmpCreation::Never => return,
+            XmpCreation::ReplaceExtension => source_path.with_extension("xmp"),
+            XmpCreation::AppendExtension => xmp_with_full_name(source_path, "xmp"),
+        };
         let skeleton = r#"<?xml version="1.0" encoding="UTF-8"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="RapidRAW">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -4622,12 +4658,16 @@ pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create
             log::error!("Failed to create skeleton XMP: {}", e);
             return;
         }
-        actual_xmp = Some(xmp_path);
+        xmp_files.push(xmp_path);
     }
 
-    if let Some(xmp_file) = actual_xmp
-        && let Ok(mut content) = fs::read_to_string(&xmp_file)
-    {
+    for xmp_file in xmp_files {
+        write_metadata_to_xmp(&xmp_file, metadata);
+    }
+}
+
+fn write_metadata_to_xmp(xmp_file: &Path, metadata: &ImageMetadata) {
+    if let Ok(mut content) = fs::read_to_string(xmp_file) {
         let rating_str = xmp_rating(metadata);
         let re_rating_attr = regex!(r#"xmp:Rating\s*=\s*"[^"]*""#);
         let re_rating_tag = regex!(r#"<xmp:Rating\s*>[^<]*</xmp:Rating>"#);
@@ -4694,6 +4734,6 @@ pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create
             }
         }
 
-        let _ = fs::write(&xmp_file, content);
+        let _ = fs::write(xmp_file, content);
     }
 }

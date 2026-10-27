@@ -465,8 +465,8 @@ fn modify_tags_for_path(
     if let Ok(settings) = crate::load_settings(app_handle.clone())
         && settings.enable_xmp_sync.unwrap_or(false)
     {
-        let create_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
-        file_management::sync_metadata_to_xmp(&source_path, &metadata, create_if_missing);
+        let xmp_creation = file_management::XmpCreation::from_settings(&settings);
+        file_management::sync_metadata_to_xmp(&source_path, &metadata, xmp_creation);
     }
 
     Ok(())
@@ -519,13 +519,13 @@ fn sync_xmp_for_rrdata(
     rrdata_path: &Path,
     metadata: &ImageMetadata,
     enable_xmp_sync: bool,
-    create_xmp_if_missing: bool,
+    xmp_creation: file_management::XmpCreation,
 ) {
     if !enable_xmp_sync {
         return;
     }
     if let Some(source_path) = rrdata_source_path(rrdata_path) {
-        file_management::sync_metadata_to_xmp(&source_path, metadata, create_xmp_if_missing);
+        file_management::sync_metadata_to_xmp(&source_path, metadata, xmp_creation);
     }
 }
 
@@ -540,7 +540,7 @@ fn retain_tags_under(
 
     let settings = crate::load_settings(app_handle.clone()).unwrap_or_default();
     let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
-    let create_xmp_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
+    let xmp_creation = file_management::XmpCreation::from_settings(&settings);
 
     let mut updated_count = 0;
     let walker = WalkDir::new(root_path).into_iter();
@@ -571,7 +571,7 @@ fn retain_tags_under(
         });
         if let Ok(metadata) = updated {
             updated_count += 1;
-            sync_xmp_for_rrdata(path, &metadata, enable_xmp_sync, create_xmp_if_missing);
+            sync_xmp_for_rrdata(path, &metadata, enable_xmp_sync, xmp_creation);
         }
     }
     Ok(updated_count)

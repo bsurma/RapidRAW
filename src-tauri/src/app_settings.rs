@@ -603,6 +603,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub create_xmp_if_missing: Option<bool>,
     #[serde(default)]
+    pub xmp_include_extension: Option<bool>,
+    #[serde(default)]
     pub is_waveform_visible: Option<bool>,
     #[serde(default)]
     pub waveform_height: Option<u32>,
@@ -750,6 +752,7 @@ impl Default for AppSettings {
             linear_raw_mode: default_linear_raw_mode(),
             enable_xmp_sync: Some(true),
             create_xmp_if_missing: Some(false),
+            xmp_include_extension: Some(false),
             is_waveform_visible: Some(false),
             waveform_height: Some(220),
             active_waveform_channel: Some("luma".to_string()),
