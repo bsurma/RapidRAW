@@ -123,10 +123,21 @@ pub async fn immich_get_images(
     for item in resolved {
         let path = item.path.to_string_lossy().into_owned();
         if item.path.exists() {
+            if let Some(rating) = item.rating {
+                sync::sync_listed_rating(&item.path, rating);
+            }
             local_paths.extend(virtual_copies(&item.path));
             local_paths.push(path);
         } else {
-            placeholders.push(placeholder_file(&path, item.file_modified_at.as_deref()));
+            let rating = item
+                .rating
+                .map(|r| sync::sync_listed_rating(&item.path, r))
+                .unwrap_or(0);
+            placeholders.push(placeholder_file(
+                &path,
+                item.file_modified_at.as_deref(),
+                rating,
+            ));
         }
         registry::insert(item.path, item.image);
     }
@@ -137,12 +148,12 @@ pub async fn immich_get_images(
     Ok(files)
 }
 
-fn placeholder_file(path: &str, file_modified_at: Option<&str>) -> ImageFile {
+fn placeholder_file(path: &str, file_modified_at: Option<&str>, rating: u8) -> ImageFile {
     let modified = file_modified_at
         .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
         .map(|t| t.timestamp().max(0) as u64)
         .unwrap_or(0);
-    ImageFile::placeholder(path.to_string(), modified)
+    ImageFile::placeholder(path.to_string(), modified).with_rating(rating)
 }
 
 fn virtual_copies(path: &Path) -> Vec<String> {

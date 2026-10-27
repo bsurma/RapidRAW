@@ -144,6 +144,7 @@ async fn upload_export(
     }
     if entry.is_some() {
         registry::set_listed_asset(source, &new_id);
+        sync::sync_rating_to_asset(client, source, &new_id).await;
     }
     Ok(())
 }

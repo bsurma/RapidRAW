@@ -387,6 +387,9 @@ pub fn update_sidecar(
         fs::create_dir_all(parent)?;
     }
     write_sidecar(sidecar_path, source_path, &metadata)?;
+    if crate::immich::is_remote(source_path) {
+        crate::immich::wake_sync();
+    }
     Ok(metadata)
 }
 
@@ -418,6 +421,10 @@ fn is_default_sidecar(sidecar_path: &Path, source_path: &Path, metadata: &ImageM
         || metadata.tags.as_ref().is_some_and(|tags| !tags.is_empty())
         || !crate::image_processing::is_default_adjustments(&metadata.adjustments)
     {
+        return false;
+    }
+
+    if file_management::is_cloud_placeholder(source_path) {
         return false;
     }
 

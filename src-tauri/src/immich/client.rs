@@ -19,6 +19,23 @@ pub struct Asset {
     pub file_modified_at: Option<String>,
     #[serde(default)]
     pub is_trashed: bool,
+    #[serde(default)]
+    pub exif_info: Option<ExifInfo>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ExifInfo {
+    pub rating: Option<f64>,
+}
+
+impl Asset {
+    pub fn rating(&self) -> Option<u8> {
+        self.exif_info.as_ref().map(|exif| match exif.rating {
+            Some(r) if (1.0..=5.0).contains(&r) => r.round() as u8,
+            _ => 0,
+        })
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -176,6 +193,27 @@ impl ImmichClient {
     pub async fn me(&self) -> Result<User, String> {
         self.json(self.request(Method::GET, "/users/me"), "user")
             .await
+    }
+
+    pub async fn asset(&self, asset_id: &str) -> Result<Asset, String> {
+        self.json(
+            self.request(Method::GET, &format!("/assets/{asset_id}")),
+            "asset",
+        )
+        .await
+    }
+
+    pub async fn set_rating(&self, asset_ids: &[String], rating: u8) -> Result<(), String> {
+        if asset_ids.is_empty() {
+            return Ok(());
+        }
+        self.send(
+            self.request(Method::PUT, "/assets")
+                .json(&json!({ "ids": asset_ids, "rating": rating.min(5) })),
+            "updating rating",
+        )
+        .await
+        .map(|_| ())
     }
 
     pub async fn albums(&self) -> Result<Vec<Album>, String> {

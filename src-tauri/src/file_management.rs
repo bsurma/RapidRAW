@@ -328,6 +328,11 @@ pub struct ImageFile {
 }
 
 impl ImageFile {
+    pub fn with_rating(mut self, rating: u8) -> Self {
+        self.rating = rating;
+        self
+    }
+
     pub fn placeholder(path: String, modified: u64) -> Self {
         let is_raw = crate::formats::is_raw_file(&path);
         Self {

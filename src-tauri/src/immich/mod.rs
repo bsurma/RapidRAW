@@ -19,6 +19,7 @@ use client::ImmichClient;
 
 pub use config::ImmichSettings;
 pub use files::ensure_local;
+pub use sync::wake as wake_sync;
 pub use thumbnails::placeholder_thumbnail;
 pub use trash::trash_remote;
 pub use uploads::on_exported;

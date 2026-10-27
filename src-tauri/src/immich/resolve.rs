@@ -11,6 +11,7 @@ pub struct Resolved {
     pub path: PathBuf,
     pub image: RemoteImage,
     pub file_modified_at: Option<String>,
+    pub rating: Option<u8>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -23,7 +24,7 @@ pub struct Filter {
 
 impl Filter {
     fn to_query(&self) -> Value {
-        let mut query = json!({ "type": "IMAGE" });
+        let mut query = json!({ "type": "IMAGE", "withExif": true });
         if let Some(album) = &self.album_id {
             query["albumIds"] = json!([album]);
         }
@@ -135,9 +136,15 @@ pub async fn listing(
         if !crate::formats::is_supported_image_file(&path) || !seen.insert(path.clone()) {
             continue;
         }
+        let rating = match (listed.rating(), source.rating()) {
+            (Some(r), _) if r > 0 => Some(r),
+            (_, Some(r)) if r > 0 => Some(r),
+            (listed_r, source_r) => listed_r.or(source_r),
+        };
         resolved.push(Resolved {
             path,
             file_modified_at: source.file_modified_at.clone(),
+            rating,
             image: RemoteImage {
                 asset_id: source.id.clone(),
                 listed_asset_id: listed.id.clone(),
