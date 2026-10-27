@@ -333,6 +333,19 @@ impl ImageFile {
         self
     }
 
+    pub fn with_taken_at(mut self, modified: Option<u64>, date_taken: Option<String>) -> Self {
+        if let Some(modified) = modified {
+            self.modified = modified;
+        }
+        if let Some(date_taken) = date_taken {
+            self.exif
+                .get_or_insert_with(HashMap::new)
+                .entry("DateTimeOriginal".to_string())
+                .or_insert(date_taken);
+        }
+        self
+    }
+
     pub fn placeholder(path: String, modified: u64) -> Self {
         let is_raw = crate::formats::is_raw_file(&path);
         Self {

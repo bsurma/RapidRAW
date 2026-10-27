@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 use tauri::AppHandle;
 
@@ -119,6 +120,7 @@ pub async fn immich_get_images(
     let resolved = resolve::listing(&session.client, &filter, &session.cache_dir).await?;
 
     let mut local_paths = Vec::new();
+    let mut local_dates = HashMap::new();
     let mut placeholders = Vec::new();
     for item in resolved {
         let path = item.path.to_string_lossy().into_owned();
@@ -128,32 +130,35 @@ pub async fn immich_get_images(
             }
             local_paths.extend(virtual_copies(&item.path));
             local_paths.push(path);
+            local_dates.insert(item.path.clone(), (item.taken_at, item.date_taken));
         } else {
             let rating = item
                 .rating
                 .map(|r| sync::sync_listed_rating(&item.path, r))
                 .unwrap_or(0);
-            placeholders.push(placeholder_file(
-                &path,
-                item.file_modified_at.as_deref(),
-                rating,
-            ));
+            placeholders.push(
+                ImageFile::placeholder(path, 0)
+                    .with_rating(rating)
+                    .with_taken_at(item.taken_at, item.date_taken),
+            );
         }
         registry::insert(item.path, item.image);
     }
 
-    let mut files =
-        crate::file_management::get_album_images(local_paths, app_handle.clone()).await?;
-    files.extend(placeholders);
+    // Cached originals would otherwise sort by when they were downloaded, not when they were taken.
+    let files = crate::file_management::get_album_images(local_paths, app_handle.clone())
+        .await?
+        .into_iter()
+        .map(|file| {
+            let (source, _) = crate::file_management::parse_virtual_path(&file.path);
+            match local_dates.get(&source) {
+                Some((taken_at, date_taken)) => file.with_taken_at(*taken_at, date_taken.clone()),
+                None => file,
+            }
+        })
+        .chain(placeholders)
+        .collect();
     Ok(files)
-}
-
-fn placeholder_file(path: &str, file_modified_at: Option<&str>, rating: u8) -> ImageFile {
-    let modified = file_modified_at
-        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-        .map(|t| t.timestamp().max(0) as u64)
-        .unwrap_or(0);
-    ImageFile::placeholder(path.to_string(), modified).with_rating(rating)
 }
 
 fn virtual_copies(path: &Path) -> Vec<String> {

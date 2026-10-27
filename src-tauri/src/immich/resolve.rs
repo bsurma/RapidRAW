@@ -10,7 +10,8 @@ use super::registry::{self, RemoteImage};
 pub struct Resolved {
     pub path: PathBuf,
     pub image: RemoteImage,
-    pub file_modified_at: Option<String>,
+    pub taken_at: Option<u64>,
+    pub date_taken: Option<String>,
     pub rating: Option<u8>,
 }
 
@@ -143,7 +144,10 @@ pub async fn listing(
         };
         resolved.push(Resolved {
             path,
-            file_modified_at: source.file_modified_at.clone(),
+            taken_at: source.taken_at().map(|t| t.timestamp().max(0) as u64),
+            date_taken: source
+                .local_taken_at()
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()),
             rating,
             image: RemoteImage {
                 asset_id: source.id.clone(),

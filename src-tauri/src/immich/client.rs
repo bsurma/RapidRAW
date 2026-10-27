@@ -16,7 +16,11 @@ pub struct Asset {
     pub kind: String,
     pub original_file_name: String,
     #[serde(default)]
+    pub file_created_at: Option<String>,
+    #[serde(default)]
     pub file_modified_at: Option<String>,
+    #[serde(default)]
+    pub local_date_time: Option<String>,
     #[serde(default)]
     pub is_trashed: bool,
     #[serde(default)]
@@ -27,9 +31,31 @@ pub struct Asset {
 #[serde(rename_all = "camelCase", default)]
 pub struct ExifInfo {
     pub rating: Option<f64>,
+    pub date_time_original: Option<String>,
+}
+
+fn parse_time(time: Option<&str>) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    chrono::DateTime::parse_from_rfc3339(time?).ok()
 }
 
 impl Asset {
+    pub fn taken_at(&self) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+        let exif_date = self
+            .exif_info
+            .as_ref()
+            .and_then(|exif| exif.date_time_original.as_deref());
+        parse_time(exif_date)
+            .or_else(|| parse_time(self.file_created_at.as_deref()))
+            .or_else(|| parse_time(self.file_modified_at.as_deref()))
+    }
+
+    // Immich stores the wall-clock time the photo was taken as if it were UTC.
+    pub fn local_taken_at(&self) -> Option<chrono::NaiveDateTime> {
+        parse_time(self.local_date_time.as_deref())
+            .map(|t| t.naive_utc())
+            .or_else(|| self.taken_at().map(|t| t.naive_local()))
+    }
+
     pub fn rating(&self) -> Option<u8> {
         self.exif_info.as_ref().map(|exif| match exif.rating {
             Some(r) if (1.0..=5.0).contains(&r) => r.round() as u8,

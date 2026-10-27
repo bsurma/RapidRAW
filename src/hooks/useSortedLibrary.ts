@@ -43,6 +43,10 @@ const parseFocalLength = (val: string | undefined): number => {
   return isNaN(numVal) ? 0 : numVal;
 };
 
+// Raw EXIF uses `YYYY:MM:DD HH:MM:SS` while RAW metadata uses `YYYY-MM-DD HH:MM:SS`.
+const normalizeDateTaken = (val: string | undefined): string =>
+  (val || '').replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+
 const nameCollator = new Intl.Collator();
 
 const EXIF_SORT_KEYS = new Set(['date_taken', 'iso', 'shutter_speed', 'aperture', 'focal_length']);
@@ -269,9 +273,13 @@ function computeGroupedLibrary(
 
   const names = new Map<ImageFile, string>();
   const values = new Map<ImageFile, number>();
+  const datesTaken = new Map<ImageFile, string>();
   for (const image of list) {
     names.set(image, image.path.split(/[\\/]/).pop() || image.path);
     values.set(image, getNumericSortValue(image));
+    if (key === 'date_taken') {
+      datesTaken.set(image, normalizeDateTaken(exifByPath[image.path]?.DateTimeOriginal));
+    }
   }
   const compareNames = (a: ImageFile, b: ImageFile) => nameCollator.compare(names.get(a)!, names.get(b)!);
 
@@ -280,8 +288,8 @@ function computeGroupedLibrary(
 
     switch (key) {
       case 'date_taken': {
-        const dateA = exifByPath[a.path]?.DateTimeOriginal || '';
-        const dateB = exifByPath[b.path]?.DateTimeOriginal || '';
+        const dateA = datesTaken.get(a)!;
+        const dateB = datesTaken.get(b)!;
         if (dateA !== dateB) comparison = dateA < dateB ? -1 : 1;
         else comparison = a.modified - b.modified;
         break;
